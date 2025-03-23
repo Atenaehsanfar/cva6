@@ -54,6 +54,8 @@ module cva6_tlb_sv39x4
     output logic lu_is_1G_o,
     output logic lu_hit_o
 );
+//Having DetectionOnly and Correction options (Atena)
+  localparam bit DetectionOnly = 0;
 
   // SV39 defines three levels of page tables
   typedef struct packed {
@@ -92,9 +94,18 @@ module cva6_tlb_sv39x4
   logic [ValidBits-1:0] valid_update, valid_dec;
   logic [ValidSize-1:0] valid_n, valid_q;
 
+  // Error detection signals(Atena)
+  logic [1:0] invalidate_valid;
+  logic [TLB_ENTRIES-1:0][1:0] invalidate_pte;
+  logic [TLB_ENTRIES-1:0][1:0] invalidate_gpte;
+  logic [TLB_ENTRIES-1:0][1:0] invalidate_tag;
+
+
   tags_t [TLB_ENTRIES-1:0] tags;
-  logic [TagBits-1:0] tags_update;
-  logic [TagsSize-1:0] tags_enc;
+  ///changing definition to array (Atena)
+  logic [TLB_ENTRIES-1:0][TagBits-1:0] tags_update;
+  logic [TLB_ENTRIES-1:0][TagsSize-1:0] tags_enc;
+  ////////////////////////////////////////////////
   logic [TLB_ENTRIES-1:0][TagBits-1:0] tags_dec;
   logic [TLB_ENTRIES-1:0][TagsSize-1:0] tags_n, tags_q;
 
@@ -132,20 +143,42 @@ module cva6_tlb_sv39x4
   logic [TLB_ENTRIES-1:0] match_stage;
   riscv::pte_t g_content;
 
-  assign tags_update = {
-    update_i.asid,
-    update_i.vmid,
-    update_i.vpn[18+riscv::GPPN2:18],
-    update_i.vpn[17:9],
-    update_i.vpn[8:0],
-    update_i.is_s_2M,
-    update_i.is_s_1G,
-    update_i.is_g_2M,
-    update_i.is_g_1G,
-    s_st_enbl_i,
-    g_st_enbl_i,
-    v_i
-  };
+
+///////////////////// adding new condition for updating tags_update in case of having 1-bit error (Atena)
+  always_comb begin
+    for (int i = 0; i < TLB_ENTRIES; i++) begin
+      if (invalidate_tag[i] == 2'b01 && !DetectionOnly) begin
+            tags_update[i] = tags_dec[i];  // Only modify when necessary
+        end else begin
+            tags_update[i] = {
+              update_i.asid,
+              update_i.vmid,
+              update_i.vpn[18+riscv::GPPN2:18],
+              update_i.vpn[17:9],
+              update_i.vpn[8:0],
+              update_i.is_s_2M,
+              update_i.is_s_1G,
+              update_i.is_g_2M,
+              update_i.is_g_1G,
+              s_st_enbl_i,
+              g_st_enbl_i,
+              v_i
+           };
+        end
+    end
+  end
+
+
+
+     //for (int i = 0; i < TLB_ENTRIES; i++) begin
+       //if (invalidate_tag[i] == 2'b01) begin
+       //  tags_update[i] = tags_dec[i]; // If any entry has 1-bit error, use `tags_dec`
+         ///break;
+
+
+
+////////////////////////////////////////////////////////////
+
 
   if (EccEnable) begin: gen_tlb_ecc
     hsiao_ecc_enc #(
@@ -164,14 +197,19 @@ module cva6_tlb_sv39x4
       .out ( tlb_content_n.gpte)
     );
 
-    hsiao_ecc_enc #(
-      .DataWidth ( TagBits ),
-      .ProtWidth ( TagsCorrBits  )
-    ) i_ecc_tag_enc (
-      .in  ( tags_update ),
-      .out ( tags_enc   )
-    );
 
+/////////////adding for loop for because now we have seperate encoder for each entry (Atena)
+
+    for (genvar i = 0; i < TLB_ENTRIES; i++) begin
+      hsiao_ecc_enc #(
+        .DataWidth ( TagBits ),
+        .ProtWidth ( TagsCorrBits  )
+      ) i_ecc_tag_enc (
+        .in  ( tags_update[i] ),
+        .out ( tags_enc[i]   )
+      );
+    end
+/////////////////////////////////////////////////////////////////////////////////////
     hsiao_ecc_enc #(
       .DataWidth ( ValidBits ),
       .ProtWidth ( ValidCorrBits )
@@ -187,7 +225,7 @@ module cva6_tlb_sv39x4
       .in  ( valid_q ),
       .out ( valid_dec ),
       .syndrome_o (),
-      .err_o ()
+      .err_o (invalidate_valid)
     );
 
     for (genvar i = 0; i < TLB_ENTRIES; i++) begin
@@ -198,7 +236,7 @@ module cva6_tlb_sv39x4
         .in  (content_q[i].pte),
         .out (tlb_content_dec[i].pte),
         .syndrome_o (),
-        .err_o ()
+        .err_o (invalidate_pte[i])
       );
 
       hsiao_ecc_dec #(
@@ -208,7 +246,7 @@ module cva6_tlb_sv39x4
         .in  (content_q[i].gpte),
         .out (tlb_content_dec[i].gpte),
         .syndrome_o (),
-        .err_o ()
+        .err_o (invalidate_gpte[i])
       );
 
       hsiao_ecc_dec #(
@@ -218,31 +256,53 @@ module cva6_tlb_sv39x4
         .in  ( tags_q[i] ),
         .out ( tags_dec[i] ),
         .syndrome_o (),
-        .err_o ()
+        .err_o (invalidate_tag[i])
       );
 
     end
-  end else begin: gen_no_tlb_ecc
-    assign tlb_content_n.pte = update_i.content;
-    assign tlb_content_n.gpte = update_i.g_content;
-    assign tags_enc = tags_update;
-    assign valid_n = valid_update;
-    assign valid_dec = valid_q;
+
+
+  end
+   else begin: gen_no_tlb_ecc
+      assign tlb_content_n.pte = update_i.content;
+      assign tlb_content_n.gpte = update_i.g_content;
+      ////////////////////////(Atena)
+      //////assign tags_enc[i] = tags_update[i];
+      ///////////////////////////////
+      assign valid_n = valid_update;
+      assign valid_dec = valid_q;
+      for (genvar i = 0; i < TLB_ENTRIES; i++) begin
+        assign tags_enc[i] = tags_update[i];
+        assign tlb_content_dec[i].pte = content_q[i].pte;
+        assign tlb_content_dec[i].gpte = content_q[i].gpte;
+        assign tags_dec[i] = tags_q[i];
+      end
+   end
+
+
     for (genvar i = 0; i < TLB_ENTRIES; i++) begin
-      assign tlb_content_dec[i].pte = content_q[i].pte;
-      assign tlb_content_dec[i].gpte = content_q[i].gpte;
-      assign tags_dec[i] = tags_q[i];
+        // To have  fewer logic gates (Atena)
+     assign tags[i].valid = (DetectionOnly ?
+                        (|invalidate_valid || |invalidate_tag[i] || |invalidate_pte[i] || |invalidate_gpte[i]) :
+                        (invalidate_valid[1] || invalidate_tag[i][1] || invalidate_pte[i][1] || invalidate_gpte[i][1]))
+                       ? 1'b0 : valid_dec[i];
+
+     assign tlb_content_q[i].pte = (!tags[i].valid) ?
+                              (DetectionOnly ? riscv::pte_t'(content_q[i].pte) : riscv::pte_t'(tlb_content_dec[i].pte)) :
+                              riscv::pte_t'(tlb_content_dec[i].pte);
+
+     assign tlb_content_q[i].gpte = (!tags[i].valid) ?
+                               (DetectionOnly ? riscv::pte_t'(content_q[i].gpte) : riscv::pte_t'(tlb_content_dec[i].gpte)) :
+                               riscv::pte_t'(tlb_content_dec[i].gpte);
+
+     assign tags[i].tag = (!tags[i].valid) ?
+                     (DetectionOnly ? tags_q[i] : partial_tags_t'(tags_dec[i])) :
+                     (partial_tags_t'(tags_dec[i]));
     end
-  end
 
-  for (genvar i = 0; i < TLB_ENTRIES; i++) begin
-    assign tlb_content_q[i].pte = riscv::pte_t'(tlb_content_dec[i].pte);
-    assign tlb_content_q[i].gpte = riscv::pte_t'(tlb_content_dec[i].gpte);
-    assign tags[i].tag = partial_tags_t'(tags_dec[i]);
-    assign tags[i].valid = valid_dec[i];
-  end
 
-  //-------------
+
+   //-------------
   // Translation
   //-------------
   always_comb begin : translation
@@ -269,6 +329,10 @@ module cva6_tlb_sv39x4
 
 
     for (int unsigned i = 0; i < TLB_ENTRIES; i++) begin
+
+      // Skip translation if entry is invalid(Atena)
+        if (!tags[i].valid) continue;
+
       // first level match, this may be a giga page, check the ASID flags as well
       // if the entry is associated to a global address, don't match the ASID (ASID is don't care)
       match_asid[i] = (((lu_asid_i == tags[i].tag.asid) || tlb_content_q[i].pte.g) && s_st_enbl_i) || !s_st_enbl_i;
@@ -342,6 +406,23 @@ module cva6_tlb_sv39x4
     content_n = content_q;
     valid_update = valid_dec;
 
+
+
+//////////////////////////////////////////////////////
+// If a 2-bit ECC error is detected (using invalidate_valid), flush the TLB immediately (Atena)
+
+    if (invalidate_valid[1]) begin
+        valid_update = '0;    // Invalidate all TLB entries
+        tags_n = '{default: 0};  // Clear all tag entries
+        content_n = '{default: 0}; // Clear all page table entries
+
+        // Debug message for simulation
+        $display("[ERROR] 2-bit ECC error detected in valid_q! Full TLB flush triggered at time %0t ??", $time);
+    end
+
+//////////////////////////////////////////////
+
+
     for (int unsigned i = 0; i < TLB_ENTRIES; i++) begin
 
       vaddr_vpn0_match[i] = (vaddr_to_be_flushed_i[20:12] == tags[i].tag.vpn0);
@@ -410,11 +491,16 @@ module cva6_tlb_sv39x4
         // normal replacement
       end else if (update_i.valid & replace_en[i]) begin
         // update tag array
-        tags_n[i] = tags_enc;
+        tags_n[i] = tags_enc[i];
         valid_update[i] = 1'b1;
         // and content as well
         content_n[i].pte = tlb_content_n.pte;
         content_n[i].gpte = tlb_content_n.gpte;
+      end
+      // Correct single-bit errors in TLB tags
+      else if (invalidate_tag[i] == 2'b01 && !DetectionOnly)begin  //////(for updating tags_n in case of having 1 bit error_Atena)
+        tags_n[i] = tags_enc[i]; // Use tags_enc (encoded corrected tag)
+            $display("[INFO] 1-bit error detected in tags_q[%0d], correcting at time %0t", i, $time);
       end
     end
   end
@@ -505,6 +591,9 @@ module cva6_tlb_sv39x4
   `FFARNC(valid_q, valid_n, clear_i, '{default: 0}, clk_i, rst_ni)
   `FFARNC(content_q, content_n, clear_i, '{default: 0}, clk_i, rst_ni)
   `FFARNC(plru_tree_q, plru_tree_n, clear_i, '{default: 0}, clk_i, rst_ni)
+
+
+
 
   //--------------
   // Sanity checks
