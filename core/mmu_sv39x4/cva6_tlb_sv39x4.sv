@@ -144,10 +144,10 @@ module cva6_tlb_sv39x4
   riscv::pte_t g_content;
 
 
-///////////////////// adding new condition for updating tags_update in case of having 1-bit error (Atena)
+///////////////////// adding new condition for updating tags_update in case of having 1-bit error and not updating by MMU (Atena)
   always_comb begin
     for (int i = 0; i < TLB_ENTRIES; i++) begin
-      if (invalidate_tag[i] == 2'b01 && !DetectionOnly) begin
+      if (invalidate_tag[i] == 2'b01 && !DetectionOnly && !update_i.valid) begin
             tags_update[i] = tags_dec[i];  // Only modify when necessary
         end else begin
             tags_update[i] = {
@@ -170,14 +170,7 @@ module cva6_tlb_sv39x4
 
 
 
-     //for (int i = 0; i < TLB_ENTRIES; i++) begin
-       //if (invalidate_tag[i] == 2'b01) begin
-       //  tags_update[i] = tags_dec[i]; // If any entry has 1-bit error, use `tags_dec`
-         ///break;
-
-
-
-////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////
 
 
   if (EccEnable) begin: gen_tlb_ecc
@@ -198,7 +191,7 @@ module cva6_tlb_sv39x4
     );
 
 
-/////////////adding for loop for because now we have seperate encoder for each entry (Atena)
+/////////////adding for loop because now we have seperate encoders for each entry (Atena)
 
     for (genvar i = 0; i < TLB_ENTRIES; i++) begin
       hsiao_ecc_enc #(
