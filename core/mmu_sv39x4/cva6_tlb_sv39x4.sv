@@ -55,7 +55,7 @@ module cva6_tlb_sv39x4
     output logic lu_hit_o
 );
 //Having DetectionOnly and Correction options (Atena)
-  localparam bit DetectionOnly = 0;
+  localparam bit DetectionOnly = 1;
 
   // SV39 defines three levels of page tables
   typedef struct packed {
@@ -103,8 +103,8 @@ module cva6_tlb_sv39x4
 
   tags_t [TLB_ENTRIES-1:0] tags;
   ///changing definition to array (Atena)
-  logic [TLB_ENTRIES-1:0][TagBits-1:0] tags_update;
-  logic [TLB_ENTRIES-1:0][TagsSize-1:0] tags_enc;
+  logic [TagBits-1:0] tags_update;
+  logic [TagsSize-1:0] tags_enc;
   ////////////////////////////////////////////////
   logic [TLB_ENTRIES-1:0][TagBits-1:0] tags_dec;
   logic [TLB_ENTRIES-1:0][TagsSize-1:0] tags_n, tags_q;
@@ -144,13 +144,23 @@ module cva6_tlb_sv39x4
   riscv::pte_t g_content;
 
 
+  /////////////////////////////////////////////////////////// Adding counter to find entry which is supposed to be corrected (Atena)
+  logic [3:0] corr_idx;
+  always_ff@(posedge clk_i or negedge rst_ni)begin
+    if (!rst_ni)
+        corr_idx <= 0;
+    else
+      corr_idx <= (corr_idx == TLB_ENTRIES - 1) ? 0 : corr_idx + 1;
+  end
+
+
 ///////////////////// adding new condition for updating tags_update in case of having 1-bit error and not updating by MMU (Atena)
   always_comb begin
-    for (int i = 0; i < TLB_ENTRIES; i++) begin
-      if (invalidate_tag[i] == 2'b01 && !DetectionOnly && !update_i.valid) begin
-            tags_update[i] = tags_dec[i];  // Only modify when necessary
+
+      if (invalidate_tag[corr_idx] == 2'b01 && !DetectionOnly && !update_i.valid) begin
+            tags_update = tags_dec[corr_idx];  // Only modify when necessary
         end else begin
-            tags_update[i] = {
+            tags_update = {
               update_i.asid,
               update_i.vmid,
               update_i.vpn[18+riscv::GPPN2:18],
@@ -165,7 +175,7 @@ module cva6_tlb_sv39x4
               v_i
            };
         end
-    end
+
   end
 
 
@@ -191,18 +201,15 @@ module cva6_tlb_sv39x4
     );
 
 
-/////////////adding for loop because now we have seperate encoders for each entry (Atena)
-
-    for (genvar i = 0; i < TLB_ENTRIES; i++) begin
       hsiao_ecc_enc #(
         .DataWidth ( TagBits ),
         .ProtWidth ( TagsCorrBits  )
       ) i_ecc_tag_enc (
-        .in  ( tags_update[i] ),
-        .out ( tags_enc[i]   )
+        .in  ( tags_update ),
+        .out ( tags_enc   )
       );
-    end
-/////////////////////////////////////////////////////////////////////////////////////
+
+
     hsiao_ecc_enc #(
       .DataWidth ( ValidBits ),
       .ProtWidth ( ValidCorrBits )
@@ -259,13 +266,11 @@ module cva6_tlb_sv39x4
    else begin: gen_no_tlb_ecc
       assign tlb_content_n.pte = update_i.content;
       assign tlb_content_n.gpte = update_i.g_content;
-      ////////////////////////(Atena)
-      //////assign tags_enc[i] = tags_update[i];
-      ///////////////////////////////
+      assign tags_enc = tags_update;
       assign valid_n = valid_update;
       assign valid_dec = valid_q;
       for (genvar i = 0; i < TLB_ENTRIES; i++) begin
-        assign tags_enc[i] = tags_update[i];
+
         assign tlb_content_dec[i].pte = content_q[i].pte;
         assign tlb_content_dec[i].gpte = content_q[i].gpte;
         assign tags_dec[i] = tags_q[i];
@@ -484,16 +489,16 @@ module cva6_tlb_sv39x4
         // normal replacement
       end else if (update_i.valid & replace_en[i]) begin
         // update tag array
-        tags_n[i] = tags_enc[i];
+        tags_n[i] = tags_enc;
         valid_update[i] = 1'b1;
         // and content as well
         content_n[i].pte = tlb_content_n.pte;
         content_n[i].gpte = tlb_content_n.gpte;
       end
       // Correct single-bit errors in TLB tags
-      else if (invalidate_tag[i] == 2'b01 && !DetectionOnly)begin  //////(for updating tags_n in case of having 1 bit error_Atena)
-        tags_n[i] = tags_enc[i]; // Use tags_enc (encoded corrected tag)
-            $display("[INFO] 1-bit error detected in tags_q[%0d], correcting at time %0t", i, $time);
+      else if (i == corr_idx && invalidate_tag[i] == 2'b01 && !DetectionOnly)begin  //////(for updating tags_n in case of having 1 bit error_Atena)
+        tags_n[i] = tags_enc; // Use tags_enc (encoded corrected tag)
+            $display("[CORRECTION] Corrected entry index = %0d at time %0t", corr_idx, $time);
       end
     end
   end
