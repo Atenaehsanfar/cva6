@@ -226,7 +226,7 @@ always_comb begin
  if (!DetectionOnly) begin
     for (int i = 0; i < TLB_ENTRIES; i++) begin
       if (invalidate_tag[i] == 2'b01) begin
-        ///if (correction_enable == 0) begin
+        ///(3rd solution)///if (correction_enable == 0) begin
           ////  correction_end_index = i;
             correction_start_index = i;
             correction_enable = 1'b1;
