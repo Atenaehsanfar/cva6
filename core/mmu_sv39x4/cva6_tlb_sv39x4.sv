@@ -59,7 +59,7 @@ module cva6_tlb_sv39x4
     output logic lu_hit_o
 );
 //Having DetectionOnly and Correction options (Atena)
-  localparam bit DetectionOnly = 0;
+  localparam bit DetectionOnly = 1;
 
 //////////////////////////////////// (Atena)
    initial begin
@@ -356,19 +356,38 @@ rr_arb_tree #(
                         (invalidate_valid[1] || invalidate_tag[i][1] || invalidate_pte[i][1] || invalidate_gpte[i][1]))
                        ? 1'b0 : valid_dec[i];
 
+    //  assign tlb_content_q[i].pte = (!tags[i].valid) ?
+    //                           (DetectionOnly ? riscv::pte_t'(content_q[i].pte) : riscv::pte_t'(tlb_content_dec[i].pte)) :
+    //                           riscv::pte_t'(tlb_content_dec[i].pte);
+
+    //  assign tlb_content_q[i].gpte = (!tags[i].valid) ?
+    //                            (DetectionOnly ? riscv::pte_t'(content_q[i].gpte) : riscv::pte_t'(tlb_content_dec[i].gpte)) :
+    //                            riscv::pte_t'(tlb_content_dec[i].gpte);
+
+    //  assign tags[i].tag = (!tags[i].valid) ?
+    //                  (DetectionOnly ? tags_q[i] : partial_tags_t'(tags_dec[i])) :
+    //                  (partial_tags_t'(tags_dec[i]));
+    //end
+
+
+//********************************************************************************
+
+  // Use raw PTE (without ECC bits) when entry is valid (Atena)
      assign tlb_content_q[i].pte = (!tags[i].valid) ?
-                              (DetectionOnly ? riscv::pte_t'(content_q[i].pte) : riscv::pte_t'(tlb_content_dec[i].pte)) :
-                              riscv::pte_t'(tlb_content_dec[i].pte);
+                            (DetectionOnly ? riscv::pte_t'(content_q[i].pte[PteBits-1:0]) : riscv::pte_t'(tlb_content_dec[i].pte)) :
+                            riscv::pte_t'(content_q[i].pte[PteBits-1:0]);
 
      assign tlb_content_q[i].gpte = (!tags[i].valid) ?
-                               (DetectionOnly ? riscv::pte_t'(content_q[i].gpte) : riscv::pte_t'(tlb_content_dec[i].gpte)) :
-                               riscv::pte_t'(tlb_content_dec[i].gpte);
+                            (DetectionOnly ? riscv::pte_t'(content_q[i].gpte[PteBits-1:0]) : riscv::pte_t'(tlb_content_dec[i].gpte)) :
+                            riscv::pte_t'(content_q[i].gpte[PteBits-1:0]);
 
      assign tags[i].tag = (!tags[i].valid) ?
-                     (DetectionOnly ? tags_q[i] : partial_tags_t'(tags_dec[i])) :
-                     (partial_tags_t'(tags_dec[i]));
+                  (DetectionOnly ? tags_q[i][TagBits-1:0] : partial_tags_t'(tags_dec[i])) :
+                  partial_tags_t'(tags_q[i][TagBits-1:0]);
+
     end
 
+  //***********************************************************************************
 
 
    //-------------
