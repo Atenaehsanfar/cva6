@@ -58,7 +58,7 @@ module cva6_tlb_sv39x4
     output logic lu_hit_o
 );
 //Having DetectionOnly and Correction options (Atena)
-  localparam bit DetectionOnly = 1;
+  localparam bit DetectionOnly = 0;
 
   ///////////////////////////////////// (Atena)
    initial begin
