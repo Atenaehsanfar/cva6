@@ -58,7 +58,7 @@ module cva6_tlb_sv39x4
     output logic lu_hit_o
 );
 //Having DetectionOnly and Correction options (Atena)
-  localparam bit DetectionOnly = 0;
+  localparam bit DetectionOnly = 1;
 
   ///////////////////////////////////// (Atena)
    initial begin
@@ -225,7 +225,7 @@ always_ff @(posedge clk_i or negedge rst_ni) begin
     already_invalidated <= '0;
   else begin
     for (int i = 0; i < TLB_ENTRIES; i++) begin
-      if (invalidate_tag[i] == 2'b01 && lu_access_i && !DetectionOnly)
+      if ((invalidate_tag[i] == 2'b01 || invalidate_pte[i] == 2'b01 || invalidate_gpte[i] == 2'b01) && lu_access_i && !DetectionOnly)
         already_invalidated[i] <= 1'b1;
       else if (update_i.valid && replace_en[i])
         already_invalidated[i] <= 1'b0;
@@ -411,21 +411,34 @@ counter #(
                         (invalidate_valid[1] || invalidate_tag[i][1] || invalidate_pte[i][1] || invalidate_gpte[i][1]))
                         ? 1'b0 : valid_dec[i];
 
-     assign tlb_content_q[i].pte = (!tags[i].valid) ?
-                              (DetectionOnly ? riscv::pte_t'(content_q[i].pte) : riscv::pte_t'(tlb_content_dec[i].pte)) :
-                              riscv::pte_t'(tlb_content_dec[i].pte);
+    //  assign tlb_content_q[i].pte = (!tags[i].valid) ?
+    //                           (DetectionOnly ? riscv::pte_t'(content_q[i].pte) : riscv::pte_t'(tlb_content_dec[i].pte)) :
+    //                           riscv::pte_t'(tlb_content_dec[i].pte);
 
-     assign tlb_content_q[i].gpte = (!tags[i].valid) ?
-                               (DetectionOnly ? riscv::pte_t'(content_q[i].gpte) : riscv::pte_t'(tlb_content_dec[i].gpte)) :
-                               riscv::pte_t'(tlb_content_dec[i].gpte);
+    //  assign tlb_content_q[i].gpte = (!tags[i].valid) ?
+    //                            (DetectionOnly ? riscv::pte_t'(content_q[i].gpte) : riscv::pte_t'(tlb_content_dec[i].gpte)) :
+    //                            riscv::pte_t'(tlb_content_dec[i].gpte);
 
-     assign tags[i].tag = (!tags[i].valid) ?
-                     (DetectionOnly ? tags_q[i] : partial_tags_t'(tags_dec[i])) :
-                     (partial_tags_t'(tags_dec[i]));
-    end
+    //  assign tags[i].tag = (!tags[i].valid) ?
+    //                  (DetectionOnly ? tags_q[i] : partial_tags_t'(tags_dec[i])) :
+    //                  (partial_tags_t'(tags_dec[i]));
+    // end
 
 
 ///////////////////////////////////////////////////////////////////////////////////////
+//***********************************************************************************
+//////////////////////Using raw data instead of decoder output/ Bypassing ECC when MMU needs translation(Atena)
+
+        //  assign tlb_content_q[i].pte  = content_q[i].pte[PteBits-1:0];
+        //  assign tlb_content_q[i].gpte = content_q[i].gpte[PteBits-1:0];
+
+         assign tlb_content_q[i].pte  = (!DetectionOnly && invalidate_pte[i]  == 2'b01 && !lu_access_i) ? tlb_content_dec[i].pte  : content_q[i].pte;
+         assign tlb_content_q[i].gpte = (!DetectionOnly && invalidate_gpte[i] == 2'b01 && !lu_access_i) ? tlb_content_dec[i].gpte : content_q[i].gpte;
+         assign tags[i].tag           = tags_q[i][TagBits-1:0];
+
+    end
+
+///***************************************************************************************
 
 
    //-------------
@@ -637,7 +650,7 @@ counter #(
 
 
     //////////////////////////////////////////// modified critical path (Atena)111
-          else if (!DetectionOnly && (invalidate_tag[i] == 2'b01) && lu_access_i && !already_invalidated[i]) begin
+          else if (!DetectionOnly && (invalidate_tag[i] == 2'b01 || invalidate_pte[i] == 2'b01 || invalidate_gpte[i] == 2'b01) && lu_access_i && !already_invalidated[i]) begin
                  valid_update[i] = 1'b0;
 
                   $display("[INVALIDATE] TLB entry %0d invalidated due to 1-bit ECC error + lu_access at time %0t", i, $time);
