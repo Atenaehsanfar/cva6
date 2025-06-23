@@ -109,6 +109,9 @@ module cva6_tlb_sv39x4
   logic [TLB_ENTRIES-1:0][1:0] invalidate_gpte;
   logic [TLB_ENTRIES-1:0][1:0] invalidate_tag;
 
+  logic invalidate_entry [TLB_ENTRIES];
+
+  ////////////////////////////
 
   tags_t [TLB_ENTRIES-1:0] tags;
   logic [TagBits-1:0] tags_update;
@@ -403,13 +406,35 @@ counter #(
 
 /////////////////////////////////////////////////////////////////////////////////////////
 
-    for (genvar i = 0; i < TLB_ENTRIES; i++) begin
+    //for (genvar i = 0; i < TLB_ENTRIES; i++) begin
 
-            // To have  fewer logic gates (Atena)
-     assign tags[i].valid = (DetectionOnly ?
-                        (|invalidate_valid || |invalidate_tag[i] || |invalidate_pte[i] || |invalidate_gpte[i]) :
-                        (invalidate_valid[1] || invalidate_tag[i][1] || invalidate_pte[i][1] || invalidate_gpte[i][1]))
-                        ? 1'b0 : valid_dec[i];
+    //         // To have  fewer logic gates (Atena)
+    //  assign tags[i].valid = (DetectionOnly ?
+    //                     (|invalidate_valid || |invalidate_tag[i] || |invalidate_pte[i] || |invalidate_gpte[i]) :
+    //                     (invalidate_valid[1] || invalidate_tag[i][1] || invalidate_pte[i][1] || invalidate_gpte[i][1])||
+    //                     (lu_access_i && (invalidate_tag[i] == 2'b01 || invalidate_pte[i] == 2'b01 || invalidate_gpte[i] == 2'b01))
+
+    //                     ? 1'b0 : valid_dec[i];
+
+
+// Precompute once per entry:
+//logic invalidate_entry [TLB_ENTRIES];
+///// invalidate entries with 1-bit error in tag or content if MMU asks for translation
+
+     always_comb begin
+          for (int i = 0; i < TLB_ENTRIES; i++) begin
+           if (DetectionOnly)
+               invalidate_entry[i] = |invalidate_valid || |invalidate_tag[i] || |invalidate_pte[i] || |invalidate_gpte[i];
+           else
+              invalidate_entry[i] = invalidate_valid[1] || invalidate_tag[i][1] || invalidate_pte[i][1] || invalidate_gpte[i][1]
+                            || (lu_access_i && (invalidate_tag[i]==2'b01 || invalidate_pte[i]==2'b01 || invalidate_gpte[i]==2'b01));
+          end
+      end
+
+     for (genvar i = 0; i < TLB_ENTRIES; i++) begin
+        assign tags[i].valid = invalidate_entry[i] ? 1'b0 : valid_dec[i];
+
+
 
     //  assign tlb_content_q[i].pte = (!tags[i].valid) ?
     //                           (DetectionOnly ? riscv::pte_t'(content_q[i].pte) : riscv::pte_t'(tlb_content_dec[i].pte)) :
@@ -427,16 +452,13 @@ counter #(
 
 ///////////////////////////////////////////////////////////////////////////////////////
 //***********************************************************************************
-//////////////////////Using raw data instead of decoder output/ Bypassing ECC when MMU needs translation(Atena)
+//////////////////////Using raw data instead of decoder output in case of having no error/ Bypassing ECC when MMU needs translation(Atena)
 
-        //  assign tlb_content_q[i].pte  = content_q[i].pte[PteBits-1:0];
-        //  assign tlb_content_q[i].gpte = content_q[i].gpte[PteBits-1:0];
-
-         assign tlb_content_q[i].pte  = (!DetectionOnly && invalidate_pte[i]  == 2'b01 && !lu_access_i) ? tlb_content_dec[i].pte  : content_q[i].pte;
-         assign tlb_content_q[i].gpte = (!DetectionOnly && invalidate_gpte[i] == 2'b01 && !lu_access_i) ? tlb_content_dec[i].gpte : content_q[i].gpte;
+         assign tlb_content_q[i].pte  = content_q[i].pte[PteBits-1:0];
+         assign tlb_content_q[i].gpte = content_q[i].gpte[PteBits-1:0];
          assign tags[i].tag           = tags_q[i][TagBits-1:0];
 
-    end
+      end
 
 ///***************************************************************************************
 
