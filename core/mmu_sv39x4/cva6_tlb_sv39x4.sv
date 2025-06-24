@@ -108,8 +108,12 @@ module cva6_tlb_sv39x4
   logic [TLB_ENTRIES-1:0][1:0] invalidate_pte;
   logic [TLB_ENTRIES-1:0][1:0] invalidate_gpte;
   logic [TLB_ENTRIES-1:0][1:0] invalidate_tag;
-
+/////////////////////////////////////////////// (Atena)
   logic invalidate_entry [TLB_ENTRIES];
+
+///////////////////////////////////////////////////////// (Atena)
+  logic [PteBits-1:0] pte_update_mux;
+  logic [PteBits-1:0] gpte_update_mux;
 
   ////////////////////////////
 
@@ -250,7 +254,7 @@ always_comb begin
 
       ///////////modified critical path (Atena)
      /// using lu_access_i and valid_update  to envalidate 1-bit error entry during requesting for  translation (Atena)
-       if (invalidate_tag[i] == 2'b01 && !lu_access_i && !already_invalidated[i]) begin////////////using lu_access_i to invalidate
+       if ((invalidate_tag[i] == 2'b01 || invalidate_pte[i] == 2'b01 || invalidate_gpte[i] == 2'b01) && !lu_access_i && !already_invalidated[i]) begin////////////using lu_access_i to invalidate
             correction_start_index = i;
             correction_enable = 1'b1;
 
@@ -304,6 +308,25 @@ counter #(
         end
 
   end
+////////////////////////////////////////////////////////////////////////////
+
+/////correctiion of PteBits (Atena)
+
+  always_comb begin
+    if (invalidate_pte[correction_index] == 2'b01 && !DetectionOnly && !update_i.valid) begin
+      pte_update_mux = tlb_content_dec[correction_index].pte;
+    end else begin
+       pte_update_mux = update_i.content;
+        end
+  end
+
+  always_comb begin
+    if (invalidate_gpte[correction_index] == 2'b01 && !DetectionOnly && !update_i.valid) begin
+      gpte_update_mux = tlb_content_dec[correction_index].gpte;
+    end else begin
+        gpte_update_mux = update_i.g_content;
+        end
+  end
 
 
   ////////////////////////////////////////////////////////////
@@ -314,7 +337,7 @@ counter #(
       .DataWidth ( PteBits ),
       .ProtWidth ( PteCorrBits )
     ) i_ecc_pte_enc (
-      .in  ( update_i.content ),
+      .in  ( pte_update_mux ),
       .out ( tlb_content_n.pte)
     );
 
@@ -322,7 +345,7 @@ counter #(
       .DataWidth ( PteBits ),
       .ProtWidth ( PteCorrBits )
     ) i_ecc_gpte_enc (
-      .in  ( update_i.g_content ),
+      .in  ( gpte_update_mux ),
       .out ( tlb_content_n.gpte)
     );
 
@@ -433,21 +456,6 @@ counter #(
 
      for (genvar i = 0; i < TLB_ENTRIES; i++) begin
         assign tags[i].valid = invalidate_entry[i] ? 1'b0 : valid_dec[i];
-
-
-
-    //  assign tlb_content_q[i].pte = (!tags[i].valid) ?
-    //                           (DetectionOnly ? riscv::pte_t'(content_q[i].pte) : riscv::pte_t'(tlb_content_dec[i].pte)) :
-    //                           riscv::pte_t'(tlb_content_dec[i].pte);
-
-    //  assign tlb_content_q[i].gpte = (!tags[i].valid) ?
-    //                            (DetectionOnly ? riscv::pte_t'(content_q[i].gpte) : riscv::pte_t'(tlb_content_dec[i].gpte)) :
-    //                            riscv::pte_t'(tlb_content_dec[i].gpte);
-
-    //  assign tags[i].tag = (!tags[i].valid) ?
-    //                  (DetectionOnly ? tags_q[i] : partial_tags_t'(tags_dec[i])) :
-    //                  (partial_tags_t'(tags_dec[i]));
-    // end
 
 
 ///////////////////////////////////////////////////////////////////////////////////////
@@ -582,7 +590,7 @@ counter #(
 // If a 2-bit ECC error is detected (using invalidate_valid), flush the TLB immediately (Atena)
 
 
-    if (invalidate_valid[1]) begin
+    if (invalidate_valid[1] || (invalidate_valid[0] && lu_access_i)) begin
         valid_update = '0;    // Invalidate all TLB entries
         tags_n = '{default: 0};  // Clear all tag entries
         content_n = '{default: 0}; // Clear all page table entries
@@ -682,16 +690,30 @@ counter #(
 
         //////// using lu_access_i and valid_update  to envalidate 1-bit error entry during requesting for  translation (Atena)
 
-          else if(!DetectionOnly && corr_state_q == CORRECTING && correction_enable &&
-                  (i == correction_index) && invalidate_tag[i] == 2'b01 && !already_invalidated[i])begin
-                  tags_n[i] = tags_enc; // Use tags_enc (encoded corrected tag)
-                  $display("[CORRECTION] Corrected entry index = %0d at time %0t", correction_index, $time);
+          else if(!DetectionOnly && corr_state_q == CORRECTING && correction_enable && (i == correction_index) && !already_invalidated[i])begin
 
+                  // tags_n[i] = tags_enc; // Use tags_enc (encoded corrected tag)
+                  // $display("[CORRECTION] Corrected entry index = %0d at time %0t", correction_index, $time);
+                  //end
+
+               if (invalidate_tag[i] == 2'b01) begin
+                   tags_n[i] = tags_enc;
+                   $display("[CORRECTION] Corrected TAG at index = %0d at time %0t", correction_index, $time);
                end
 
+               if (invalidate_pte[i] == 2'b01) begin
+                   content_n[i].pte = tlb_content_n.pte; // Use your corrected, re-encoded pte
+                   $display("[CORRECTION] Corrected PTE at index = %0d at time %0t", correction_index, $time);
+               end
+
+               if (invalidate_gpte[i] == 2'b01) begin
+                   content_n[i].gpte = tlb_content_n.gpte; // Use your corrected, re-encoded gpte
+                   $display("[CORRECTION] Corrected GPTE at index = %0d at time %0t", correction_index, $time);
+               end
 
           end
 
+    end
   end
 
   // -----------------------------------------------
