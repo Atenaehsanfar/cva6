@@ -288,7 +288,7 @@ counter #(
 ///////////////////// adding new condition for updating tags_update in case of having 1-bit error and not updating by MMU (Atena)
   always_comb begin
 
-      if (invalidate_tag[correction_index] == 2'b01 && !DetectionOnly && !update_i.valid) begin
+      if (invalidate_tag[correction_index] == 2'b01 && !DetectionOnly && !update_i.valid && !lu_access_i) begin
             tags_update = tags_dec[correction_index];  // Only modify when necessary
         end else begin
             tags_update = {
@@ -313,7 +313,7 @@ counter #(
 /////correctiion of PteBits (Atena)
 
   always_comb begin
-    if (invalidate_pte[correction_index] == 2'b01 && !DetectionOnly && !update_i.valid) begin
+    if (invalidate_pte[correction_index] == 2'b01 && !DetectionOnly && !update_i.valid && !lu_access_i)  begin
       pte_update_mux = tlb_content_dec[correction_index].pte;
     end else begin
        pte_update_mux = update_i.content;
@@ -321,7 +321,7 @@ counter #(
   end
 
   always_comb begin
-    if (invalidate_gpte[correction_index] == 2'b01 && !DetectionOnly && !update_i.valid) begin
+    if (invalidate_gpte[correction_index] == 2'b01 && !DetectionOnly && !update_i.valid && !lu_access_i) begin
       gpte_update_mux = tlb_content_dec[correction_index].gpte;
     end else begin
         gpte_update_mux = update_i.g_content;
@@ -690,7 +690,7 @@ counter #(
 
         //////// using lu_access_i and valid_update  to envalidate 1-bit error entry during requesting for  translation (Atena)
 
-          else if(!DetectionOnly && corr_state_q == CORRECTING && correction_enable && (i == correction_index) && !already_invalidated[i])begin
+          else if(!DetectionOnly && corr_state_q == CORRECTING && correction_enable && (i == correction_index) && !already_invalidated[i] && !lu_access_i)begin
 
                   // tags_n[i] = tags_enc; // Use tags_enc (encoded corrected tag)
                   // $display("[CORRECTION] Corrected entry index = %0d at time %0t", correction_index, $time);
