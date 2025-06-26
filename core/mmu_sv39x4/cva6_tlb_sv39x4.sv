@@ -108,14 +108,19 @@ module cva6_tlb_sv39x4
   logic [TLB_ENTRIES-1:0][1:0] invalidate_pte;
   logic [TLB_ENTRIES-1:0][1:0] invalidate_gpte;
   logic [TLB_ENTRIES-1:0][1:0] invalidate_tag;
-/////////////////////////////////////////////// (Atena)
+
+/////////////////////////////////////////////// (Atena - modify combination for finding error)
   logic invalidate_entry [TLB_ENTRIES];
 
-///////////////////////////////////////////////////////// (Atena)
+///////////////////////////////////////////////////////// (Atena - adding combination for content correction)
   logic [PteBits-1:0] pte_update_mux;
   logic [PteBits-1:0] gpte_update_mux;
 
-  ////////////////////////////
+  ////////////////////////////(Atena)(ECC pipeline)
+  logic [TLB_ENTRIES-1:0][TagBits-1:0] tags_dec_q;
+  logic [TLB_ENTRIES-1:0][PteBits-1:0] tlb_pte_dec_q, tlb_gpte_dec_q;
+
+  /////////////////////////////////////////
 
   tags_t [TLB_ENTRIES-1:0] tags;
   logic [TagBits-1:0] tags_update;
@@ -175,6 +180,8 @@ module cva6_tlb_sv39x4
 
   typedef enum logic [1:0]{
     IDLE,
+    ///////////(Atena)ECC pipeline
+    WAIT_PIPE,
     CORRECTING
   } corr_state_e;
 
@@ -190,8 +197,16 @@ module cva6_tlb_sv39x4
 
         IDLE: begin
            if (correction_enable)
-               corr_state_d = CORRECTING;
+               /////corr_state_d = CORRECTING;
+               corr_state_d = WAIT_PIPE;  // Now go to WAIT_PIPE, not directly to CORRECTING
         end
+
+        ///////////////////////////////////(Atena)Ecc pipe;ine
+        WAIT_PIPE: begin
+              corr_state_d = CORRECTING;  // One-cycle delay for pipelining
+        end
+
+        //////////////////////////////
 
         CORRECTING: begin
 
@@ -221,6 +236,21 @@ module cva6_tlb_sv39x4
     end
 
 ////////////////////////////////////////////////////////////////
+
+    // Register ECC decoder outputs for pipelining (Atena - pipelined ECC)
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+      if (!rst_ni) begin
+        tags_dec_q        <= '{default: '0};
+        tlb_pte_dec_q     <= '{default: '0};
+        tlb_gpte_dec_q    <= '{default: '0};
+      end else begin
+        for (int i = 0; i < TLB_ENTRIES; i++) begin
+          tags_dec_q[i]       <= tags_dec[i];
+          tlb_pte_dec_q[i]    <= tlb_content_dec[i].pte;
+          tlb_gpte_dec_q[i]   <= tlb_content_dec[i].gpte;
+        end
+      end
+    end
 
 // Track which entries have already been invalidated //// modified critical path(Atena)
 ////////// using lu_access_i and valid_update  to envalidate 1-bit error entry during requesting for  translation (Atena)
@@ -265,7 +295,7 @@ always_comb begin
 end
 
 
-assign load_correction_start = (corr_state_q == IDLE && corr_state_d == CORRECTING);
+assign load_correction_start = (corr_state_q == WAIT_PIPE && corr_state_d == CORRECTING);
 
 
 ///////// Instantiate counter (Atena)
@@ -289,7 +319,8 @@ counter #(
   always_comb begin
 
       if (invalidate_tag[correction_index] == 2'b01 && !DetectionOnly && !update_i.valid && !lu_access_i) begin
-            tags_update = tags_dec[correction_index];  // Only modify when necessary
+        //////////////////(Atena - pipelined ECC)
+            tags_update = tags_dec_q[correction_index];  // Only modify when necessary
         end else begin
             tags_update = {
               update_i.asid,
@@ -314,7 +345,8 @@ counter #(
 
   always_comb begin
     if (invalidate_pte[correction_index] == 2'b01 && !DetectionOnly && !update_i.valid && !lu_access_i)  begin
-      pte_update_mux = tlb_content_dec[correction_index].pte;
+      //////////////////(Atena - pipelined ECC)
+      pte_update_mux = tlb_pte_dec_q[correction_index];
     end else begin
        pte_update_mux = update_i.content;
         end
@@ -322,7 +354,8 @@ counter #(
 
   always_comb begin
     if (invalidate_gpte[correction_index] == 2'b01 && !DetectionOnly && !update_i.valid && !lu_access_i) begin
-      gpte_update_mux = tlb_content_dec[correction_index].gpte;
+      //////////////////(Atena - pipelined ECC)
+      gpte_update_mux = tlb_gpte_dec_q[correction_index];
     end else begin
         gpte_update_mux = update_i.g_content;
         end
