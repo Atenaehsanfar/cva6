@@ -111,6 +111,17 @@ module cva6_tlb_sv39x4
   logic [TLB_ENTRIES-1:0][1:0] invalidate_gpte;
   logic [TLB_ENTRIES-1:0][1:0] invalidate_tag;
 
+  ///////////////////////////////////////////////////////// (Atena)
+
+  logic invalidate_entry [TLB_ENTRIES];
+
+  ///////////////////////////////////Content correction (Atena)
+  logic [PteBits-1:0] pte_update_mux;
+  logic [PteBits-1:0] gpte_update_mux;
+
+///////////////////////////////////////////////////////////////
+
+
 
   tags_t [TLB_ENTRIES-1:0] tags;
   logic [TagBits-1:0] tags_update;
@@ -174,7 +185,7 @@ always_ff @(posedge clk_i or negedge rst_ni) begin
     already_invalidated <= '0;
   else begin
     for (int i = 0; i < TLB_ENTRIES; i++) begin
-      if (invalidate_tag[i] == 2'b01 && lu_access_i && !DetectionOnly)
+      if ((invalidate_tag[i] == 2'b01 || invalidate_pte[i] == 2'b01 || invalidate_gpte[i] == 2'b01) && lu_access_i && !DetectionOnly)
         already_invalidated[i] <= 1'b1;
       else if (update_i.valid && replace_en[i])
         already_invalidated[i] <= 1'b0;
@@ -197,7 +208,7 @@ always_comb begin
       ///////////modified critical path (Atena)
      /// using lu_access_i and valid_update  to invalidate 1-bit error entry during requesting for translation (Atena)
 
-      if (invalidate_tag[i] == 2'b01 && !already_invalidated[i] && !lu_access_i) begin
+      if ((invalidate_tag[i] == 2'b01 || invalidate_pte[i] == 2'b01 || invalidate_gpte[i] == 2'b01) && !lu_access_i && !already_invalidated[i]) begin
         rr_req[i] = 1'b1; // Mark this entry as needing correction
       end
     end
@@ -229,7 +240,7 @@ rr_arb_tree #(
 ///////////////////// adding new condition for updating tags_update in case of having 1-bit error and not updating by MMU (Atena)
   always_comb begin
 
-      if ((rr_req_o)  && invalidate_tag[rr_idx] == 2'b01 && !DetectionOnly && !update_i.valid) begin
+      if ((rr_req_o)  && invalidate_tag[rr_idx] == 2'b01 && !DetectionOnly && !update_i.valid && !lu_access_i) begin
             tags_update = tags_dec[rr_idx];  // Only modify when necessary
         end else begin
             tags_update = {
@@ -251,7 +262,27 @@ rr_arb_tree #(
   end
 
 
-  ////////////////////////////////////////////////////////////
+
+/////correctiion of PteBits (Atena)
+
+    always_comb begin
+    if (invalidate_pte[rr_idx] == 2'b01 && !DetectionOnly && !update_i.valid && !lu_access_i) begin
+        pte_update_mux = tlb_content_dec[rr_idx].pte;
+    end else begin
+        pte_update_mux = update_i.content;
+        end
+    end
+
+
+    always_comb begin
+    if (invalidate_gpte[rr_idx] == 2'b01 && !DetectionOnly && !update_i.valid && !lu_access_i) begin
+        gpte_update_mux = tlb_content_dec[rr_idx].gpte;
+    end else begin
+        gpte_update_mux = update_i.g_content;
+        end
+    end
+////////////////////////////////////////////////////////////
+
 
 
   if (EccEnable) begin: gen_tlb_ecc
@@ -259,7 +290,8 @@ rr_arb_tree #(
       .DataWidth ( PteBits ),
       .ProtWidth ( PteCorrBits )
     ) i_ecc_pte_enc (
-      .in  ( update_i.content ),
+      ////// content correction (Atena)
+      .in  ( pte_update_mux ),
       .out ( tlb_content_n.pte)
     );
 
@@ -267,7 +299,8 @@ rr_arb_tree #(
       .DataWidth ( PteBits ),
       .ProtWidth ( PteCorrBits )
     ) i_ecc_gpte_enc (
-      .in  ( update_i.g_content ),
+       ////// content correction (Atena)
+      .in  ( pte_update_mux ),
       .out ( tlb_content_n.gpte)
     );
 
@@ -348,26 +381,27 @@ rr_arb_tree #(
       end
    end
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+    // for (genvar i = 0; i < TLB_ENTRIES; i++) begin
+    //     // To have  fewer logic gates (Atena)
+    //  assign tags[i].valid = (DetectionOnly ?
+    //                     (|invalidate_valid || |invalidate_tag[i] || |invalidate_pte[i] || |invalidate_gpte[i]) :
+    //                     (invalidate_valid[1] || invalidate_tag[i][1] || invalidate_pte[i][1] || invalidate_gpte[i][1]))
+    //                    ? 1'b0 : valid_dec[i];
+
+   always_comb begin
+     for (int i = 0; i < TLB_ENTRIES; i++) begin
+        if (DetectionOnly)
+            invalidate_entry[i] = |invalidate_valid || |invalidate_tag[i] || |invalidate_pte[i] || |invalidate_gpte[i];
+        else
+            invalidate_entry[i] = invalidate_valid[1] || invalidate_tag[i][1] || invalidate_pte[i][1] || invalidate_gpte[i][1]
+            || (lu_access_i && (invalidate_tag[i]==2'b01 || invalidate_pte[i]==2'b01 || invalidate_gpte[i]==2'b01));
+      end
+   end
+
 
     for (genvar i = 0; i < TLB_ENTRIES; i++) begin
-        // To have  fewer logic gates (Atena)
-     assign tags[i].valid = (DetectionOnly ?
-                        (|invalidate_valid || |invalidate_tag[i] || |invalidate_pte[i] || |invalidate_gpte[i]) :
-                        (invalidate_valid[1] || invalidate_tag[i][1] || invalidate_pte[i][1] || invalidate_gpte[i][1]))
-                       ? 1'b0 : valid_dec[i];
-
-    //  assign tlb_content_q[i].pte = (!tags[i].valid) ?
-    //                           (DetectionOnly ? riscv::pte_t'(content_q[i].pte) : riscv::pte_t'(tlb_content_dec[i].pte)) :
-    //                           riscv::pte_t'(tlb_content_dec[i].pte);
-
-    //  assign tlb_content_q[i].gpte = (!tags[i].valid) ?
-    //                            (DetectionOnly ? riscv::pte_t'(content_q[i].gpte) : riscv::pte_t'(tlb_content_dec[i].gpte)) :
-    //                            riscv::pte_t'(tlb_content_dec[i].gpte);
-
-    //  assign tags[i].tag = (!tags[i].valid) ?
-    //                  (DetectionOnly ? tags_q[i] : partial_tags_t'(tags_dec[i])) :
-    //                  (partial_tags_t'(tags_dec[i]));
-    //end
+        assign tags[i].valid = invalidate_entry[i] ? 1'b0 : valid_dec[i];
 
 
   //***********************************************************************************
@@ -487,15 +521,16 @@ rr_arb_tree #(
 
 
 //////////////////////////////////////////////////////
-// If a 2-bit ECC error is detected (using invalidate_valid), flush the TLB immediately (Atena)
+// If a 2-bit ECC error is detected (using invalidate_valid), flush the TLB immediately
+////also if having 1-bit error during MMU needs translation, flush the TLB immediately (Atena)
 
-    if (invalidate_valid[1]) begin
+    if (invalidate_valid[1] || (invalidate_valid[0] && lu_access_i)) begin
         valid_update = '0;    // Invalidate all TLB entries
         tags_n = '{default: 0};  // Clear all tag entries
         content_n = '{default: 0}; // Clear all page table entries
 
         // Debug message for simulation
-        $display("[ERROR] 2-bit ECC error detected in valid_q! Full TLB flush triggered at time %0t ??", $time);
+        $display("[ERROR] error detected in valid_q! Full TLB flush triggered at time %0t ??", $time);
     end
 
 //////////////////////////////////////////////
@@ -579,22 +614,42 @@ rr_arb_tree #(
       ///////////modified critical path (Atena)
      /// using lu_access_i and valid_update  to envalidate 1-bit error entry during requesting for  translation (Atena)
 
-           else if (invalidate_tag[i] == 2'b01 && lu_access_i && !DetectionOnly && !already_invalidated[i]) begin
+           else if ((invalidate_tag[i] == 2'b01 || invalidate_pte[i] == 2'b01 || invalidate_gpte[i] == 2'b01) && lu_access_i && !DetectionOnly && !already_invalidated[i]) begin
            valid_update[i] = 1'b0;
            $display("[INVALIDATE] TLB entry %0d invalidated due to 1-bit ECC error + lu_access at time %0t", i, $time);
        end
 
 
-      // Correct single-bit errors in TLB tags
-          else if (!DetectionOnly) begin
-                   if((i == rr_idx) && rr_req_o && invalidate_tag[i] == 2'b01 && !already_invalidated[i])begin ///(for updating tags_n in case of having 1 bit error_Atena)
-                   tags_n[i] = tags_enc; // Use tags_enc (encoded corrected tag)
-                   $display("[CORRECTION] Corrected entry index = %0d at time %0t", rr_idx, $time);
+      ////for updating tags and contents in case of having 1 bit error(Atena)
+           else if (!DetectionOnly) begin
+                   if((i == rr_idx) && rr_req_o && !already_invalidated[i] && !lu_access_i)begin
+
+                  //  tags_n[i] = tags_enc; // Use tags_enc (encoded corrected tag)
+                  //  $display("[CORRECTION] Corrected entry index = %0d at time %0t", rr_idx, $time);
+                  // end
+
+                      if (invalidate_tag[i] == 2'b01) begin
+                          tags_n[i] = tags_enc;
+                          $display("[CORRECTION] Corrected TAG at index = %0d at time %0t", rr_idx, $time);
+                      end
+
+
+                      if (invalidate_pte[i] == 2'b01) begin
+                          content_n[i].pte = tlb_content_n.pte; // Use your corrected, re-encoded pte
+                          $display("[CORRECTION] Corrected PTE at index = %0d at time %0t", rr_idx, $time);
+                      end
+
+
+                      if (invalidate_gpte[i] == 2'b01) begin
+                          content_n[i].gpte = tlb_content_n.gpte; // Use your corrected, re-encoded gpte
+                          $display("[CORRECTION] Corrected GPTE at index = %0d at time %0t", rr_idx, $time);
+                      end
+
+
                   end
           end
     end
-
-  end
+   end
 
   // -----------------------------------------------
   // PLRU - Pseudo Least Recently Used Replacement
