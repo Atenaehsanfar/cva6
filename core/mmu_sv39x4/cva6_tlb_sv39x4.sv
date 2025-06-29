@@ -401,7 +401,7 @@ rr_arb_tree #(
 
 
     for (genvar i = 0; i < TLB_ENTRIES; i++) begin
-        assign tags[i].valid = invalidate_entry[i] ? 1'b0 : valid_dec[i];
+        assign tags[i].valid = invalidate_entry[i] ? 1'b0 : valid_q[i];
 
 
   //***********************************************************************************
@@ -443,7 +443,7 @@ rr_arb_tree #(
     for (int unsigned i = 0; i < TLB_ENTRIES; i++) begin
 
       // Skip translation if entry is invalid(Atena)
-        if (!tags[i].valid) continue;
+        // if (!tags[i].valid) continue;
 
       // first level match, this may be a giga page, check the ASID flags as well
       // if the entry is associated to a global address, don't match the ASID (ASID is don't care)
@@ -467,11 +467,11 @@ rr_arb_tree #(
           lu_is_1G_o     = is_1G[i];
           lu_content_o   = tlb_content_q[i].pte;
           lu_g_content_o = tlb_content_q[i].gpte;
-          lu_hit_o       = 1'b1;
+          //lu_hit_o       = 1'b1;
           lu_hit[i]      = 1'b1;
           // not a giga page hit so check further
         end else if (vpn1 == tags[i].tag.vpn1) begin
-          // this could be a 2 mega page hit or a 4 kB hit
+          // this could be a 2 mega page hit or a 4 kB hitlu_g_
           // output accordingly
           if (is_2M[i] || vpn0 == tags[i].tag.vpn0) begin
             lu_is_2M_o = is_2M[i];
@@ -482,12 +482,22 @@ rr_arb_tree #(
             // Output G-stage and S-stage content
             lu_g_content_o = g_content;
             lu_content_o   = tlb_content_q[i].pte;
-            lu_hit_o       = 1'b1;
+            //lu_hit_o       = 1'b1;
             lu_hit[i]      = 1'b1;
-          end
-        end
+
+
+            end
+         end
       end
+
+       if (!tags[i].valid) begin
+        lu_hit[i]      = 1'b0;
+       end
+
     end
+
+    lu_hit_o = |lu_hit;
+
   end
 
 
