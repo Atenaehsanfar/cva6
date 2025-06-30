@@ -460,7 +460,7 @@ rr_arb_tree #(
       );
       // check if translation is a: S-Stage and G-Stage, S-Stage only or G-Stage only translation and virtualization mode is on/off
       match_stage[i] = (tags[i].tag.v == v_i) && (tags[i].tag.g_st_enbl == g_st_enbl_i) && (tags[i].tag.s_st_enbl == s_st_enbl_i);
-      if (tags[i].valid && match_asid[i] && match_vmid[i] && match_stage[i] && (vpn2 == (tags[i].tag.vpn2 & mask_pn2))) begin
+      if (valid_q[i] && match_asid[i] && match_vmid[i] && match_stage[i] && (vpn2 == (tags[i].tag.vpn2 & mask_pn2))) begin
         lu_gpaddr_o = make_gpaddr(s_st_enbl_i, tags[i].tag.is_s_1G, tags[i].tag.is_s_2M, lu_vaddr_i,
                                   tlb_content_q[i].pte);
         if (is_1G[i]) begin
