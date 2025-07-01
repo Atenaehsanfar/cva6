@@ -394,8 +394,8 @@ rr_arb_tree #(
         if (DetectionOnly)
             invalidate_entry[i] = |invalidate_valid || |invalidate_tag[i] || |invalidate_pte[i] || |invalidate_gpte[i];
         else
-            invalidate_entry[i] = invalidate_valid[1] || invalidate_tag[i][1] || invalidate_pte[i][1] || invalidate_gpte[i][1]
-            || (lu_access_i && (invalidate_tag[i]==2'b01 || invalidate_pte[i]==2'b01 || invalidate_gpte[i]==2'b01));
+            invalidate_entry[i] = invalidate_valid[1] || invalidate_tag[i][1] || invalidate_pte[i][1] || invalidate_gpte[i][1];
+                        // || (lu_access_i && (invalidate_tag[i]==2'b01 || invalidate_pte[i]==2'b01 || invalidate_gpte[i]==2'b01));
       end
    end
 
