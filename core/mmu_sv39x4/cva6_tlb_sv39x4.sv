@@ -460,7 +460,7 @@ counter #(
       end
 
      for (genvar i = 0; i < TLB_ENTRIES; i++) begin
-        assign tags[i].valid = invalidate_entry[i] ? 1'b0 : valid_dec[i];
+        assign tags[i].valid = invalidate_entry[i] ? 1'b0 : valid_q[i];
 
 
 ///////////////////////////////////////////////////////////////////////////////////////
@@ -505,9 +505,9 @@ counter #(
     for (int unsigned i = 0; i < TLB_ENTRIES; i++) begin
 
       // Skip translation if entry is invalid(Atena)
-        if (!tags[i].valid)begin
-        continue;
-        end
+        // if (!tags[i].valid)begin
+        // continue;
+        // end
 
       // first level match, this may be a giga page, check the ASID flags as well
       // if the entry is associated to a global address, don't match the ASID (ASID is don't care)
@@ -525,7 +525,7 @@ counter #(
       // check if translation is a: S-Stage and G-Stage, S-Stage only or G-Stage only translation and virtualization mode is on/off
 
             match_stage[i] = (tags[i].tag.v == v_i) && (tags[i].tag.g_st_enbl == g_st_enbl_i) && (tags[i].tag.s_st_enbl == s_st_enbl_i);
-      if (tags[i].valid && match_asid[i] && match_vmid[i] && match_stage[i] && (vpn2 == (tags[i].tag.vpn2 & mask_pn2))) begin
+      if (valid_q[i] && match_asid[i] && match_vmid[i] && match_stage[i] && (vpn2 == (tags[i].tag.vpn2 & mask_pn2))) begin
         lu_gpaddr_o = make_gpaddr(s_st_enbl_i, tags[i].tag.is_s_1G, tags[i].tag.is_s_2M, lu_vaddr_i,
                                   tlb_content_q[i].pte);
         if (is_1G[i]) begin
@@ -533,7 +533,7 @@ counter #(
           lu_is_1G_o     = is_1G[i];
           lu_content_o   = tlb_content_q[i].pte;
           lu_g_content_o = tlb_content_q[i].gpte;
-          lu_hit_o       = 1'b1;
+          //lu_hit_o       = 1'b1;
           lu_hit[i]      = 1'b1;
 
 
@@ -552,14 +552,23 @@ counter #(
             // Output G-stage and S-stage content
             lu_g_content_o = g_content;
             lu_content_o   = tlb_content_q[i].pte;
-            lu_hit_o       = 1'b1;
+            //lu_hit_o       = 1'b1;
             lu_hit[i]      = 1'b1;
 
 
           end
         end
       end
+
+
+      if (!tags[i].valid)begin
+          lu_hit[i]      = 1'b0;
+      end
+
     end
+
+    lu_hit_o = |lu_hit;
+
   end
 
 
