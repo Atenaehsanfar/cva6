@@ -300,7 +300,7 @@ rr_arb_tree #(
       .ProtWidth ( PteCorrBits )
     ) i_ecc_gpte_enc (
        ////// content correction (Atena)
-      .in  ( pte_update_mux ),
+      .in  ( gpte_update_mux ),
       .out ( tlb_content_n.gpte)
     );
 
