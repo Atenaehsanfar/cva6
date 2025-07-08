@@ -16,6 +16,9 @@
 //              This module is an adaptation of the Sv39 TLB developed
 //              by Florian Zaruba and David Schaffenrath to the Sv39x4 standard.
 
+
+//////////ae/arbiter-ecc//////////////(Atena)
+
 `include "common_cells/registers.svh"
 
 module cva6_tlb_sv39x4
@@ -100,6 +103,17 @@ module cva6_tlb_sv39x4
   logic [TLB_ENTRIES-1:0][1:0] invalidate_gpte;
   logic [TLB_ENTRIES-1:0][1:0] invalidate_tag;
 
+  ///////////////////////////////////////////////////////// (Atena)
+
+  logic invalidate_entry [TLB_ENTRIES];
+
+  ///////////////////////////////////Content correction (Atena)
+
+  logic [PteBits-1:0] pte_update_mux;
+  logic [PteBits-1:0] gpte_update_mux;
+
+ ////////////////////////////////////////////////////////
+
 
   tags_t [TLB_ENTRIES-1:0] tags;
   logic [TagBits-1:0] tags_update;
@@ -160,7 +174,7 @@ always_comb begin
 
   if (!DetectionOnly) begin
     for (int i = 0; i < TLB_ENTRIES; i++) begin
-      if (invalidate_tag[i] == 2'b01) begin
+      if (invalidate_tag[i] == 2'b01 || invalidate_pte[i] == 2'b01 || invalidate_gpte[i] == 2'b01) begin
         rr_req[i] = 1'b1; // Mark this entry as needing correction
       end
     end
@@ -213,8 +227,28 @@ rr_arb_tree #(
 
   end
 
-
   ////////////////////////////////////////////////////////////
+
+/////contents correction(Atena)
+
+    always_comb begin
+    if (invalidate_pte[rr_idx] == 2'b01 && !DetectionOnly && !update_i.valid) begin
+        pte_update_mux = tlb_content_dec[rr_idx].pte;
+    end else begin
+        pte_update_mux = update_i.content;
+        end
+    end
+
+
+    always_comb begin
+    if (invalidate_gpte[rr_idx] == 2'b01 && !DetectionOnly && !update_i.valid) begin
+        gpte_update_mux = tlb_content_dec[rr_idx].gpte;
+    end else begin
+        gpte_update_mux = update_i.g_content;
+        end
+    end
+
+////////////////////////////////////////////////////////////
 
 
   if (EccEnable) begin: gen_tlb_ecc
@@ -222,7 +256,7 @@ rr_arb_tree #(
       .DataWidth ( PteBits ),
       .ProtWidth ( PteCorrBits )
     ) i_ecc_pte_enc (
-      .in  ( update_i.content ),
+      .in  ( pte_update_mux ),
       .out ( tlb_content_n.pte)
     );
 
@@ -230,7 +264,7 @@ rr_arb_tree #(
       .DataWidth ( PteBits ),
       .ProtWidth ( PteCorrBits )
     ) i_ecc_gpte_enc (
-      .in  ( update_i.g_content ),
+      .in  ( gpte_update_mux ),
       .out ( tlb_content_n.gpte)
     );
 
@@ -312,22 +346,38 @@ rr_arb_tree #(
    end
 
 
-    for (genvar i = 0; i < TLB_ENTRIES; i++) begin
-        // To have  fewer logic gates (Atena)
-     assign tags[i].valid = (DetectionOnly ?
-                        (|invalidate_valid || |invalidate_tag[i] || |invalidate_pte[i] || |invalidate_gpte[i]) :
-                        (invalidate_valid[1] || invalidate_tag[i][1] || invalidate_pte[i][1] || invalidate_gpte[i][1]))
-                       ? 1'b0 : valid_dec[i];
+    // for (genvar i = 0; i < TLB_ENTRIES; i++) begin
+    //     // To have  fewer logic gates (Atena)
+    //  assign tags[i].valid = (DetectionOnly ?
+    //                     (|invalidate_valid || |invalidate_tag[i] || |invalidate_pte[i] || |invalidate_gpte[i]) :
+    //                     (invalidate_valid[1] || invalidate_tag[i][1] || invalidate_pte[i][1] || invalidate_gpte[i][1]))
+    //                    ? 1'b0 : valid_dec[i];
 
-     assign tlb_content_q[i].pte = (!tags[i].valid) ?
+
+    always_comb begin
+      for (int i = 0; i < TLB_ENTRIES; i++) begin
+
+                   if (DetectionOnly)
+                       invalidate_entry[i] = |invalidate_valid || |invalidate_tag[i] || |invalidate_pte[i] || |invalidate_gpte[i];
+                   else
+                       invalidate_entry[i] = invalidate_valid[1] || invalidate_tag[i][1] || invalidate_pte[i][1] || invalidate_gpte[i][1];
+
+      end
+   end
+
+     for (genvar i = 0; i < TLB_ENTRIES; i++) begin
+        assign tags[i].valid = invalidate_entry[i] ? 1'b0 : valid_dec[i];
+
+
+        assign tlb_content_q[i].pte = (!tags[i].valid) ?
                               (DetectionOnly ? riscv::pte_t'(content_q[i].pte) : riscv::pte_t'(tlb_content_dec[i].pte)) :
                               riscv::pte_t'(tlb_content_dec[i].pte);
 
-     assign tlb_content_q[i].gpte = (!tags[i].valid) ?
+        assign tlb_content_q[i].gpte = (!tags[i].valid) ?
                                (DetectionOnly ? riscv::pte_t'(content_q[i].gpte) : riscv::pte_t'(tlb_content_dec[i].gpte)) :
                                riscv::pte_t'(tlb_content_dec[i].gpte);
 
-     assign tags[i].tag = (!tags[i].valid) ?
+        assign tags[i].tag = (!tags[i].valid) ?
                      (DetectionOnly ? tags_q[i] : partial_tags_t'(tags_dec[i])) :
                      (partial_tags_t'(tags_dec[i]));
     end
@@ -529,11 +579,31 @@ rr_arb_tree #(
         content_n[i].pte = tlb_content_n.pte;
         content_n[i].gpte = tlb_content_n.gpte;
       end
+
+
       // Correct single-bit errors in TLB tags
           else if (!DetectionOnly) begin
-                   if((i == rr_idx) && rr_req_o && invalidate_tag[i] == 2'b01)begin  //////(for updating tags_n in case of having 1 bit error_Atena)
-                   tags_n[i] = tags_enc; // Use tags_enc (encoded corrected tag)
-                   $display("[CORRECTION] Corrected entry index = %0d at time %0t", rr_idx, $time);
+                   if(i == rr_idx) begin  //////(for updating tags_n in case of having 1 bit error_Atena)
+                  //  tags_n[i] = tags_enc; // Use tags_enc (encoded corrected tag)
+                  //  $display("[CORRECTION] Corrected entry index = %0d at time %0t", rr_idx, $time);
+
+                     if (invalidate_tag[i] == 2'b01) begin
+                          tags_n[i] = tags_enc; // Use tags_enc (encoded corrected tag)
+                          $display("[CORRECTION] Corrected entry index = %0d at time %0t", rr_idx, $time);
+                     end
+
+                     if (invalidate_pte[i] == 2'b01) begin
+                          content_n[i].pte = tlb_content_n.pte; // Use your corrected, re-encoded pte
+                          $display("[CORRECTION] Corrected PTE at index = %0d at time %0t", rr_idx, $time);
+                     end
+
+                     if (invalidate_gpte[i] == 2'b01) begin
+                          content_n[i].gpte = tlb_content_n.gpte; // Use your corrected, re-encoded gpte
+                          $display("[CORRECTION] Corrected GPTE at index = %0d at time %0t", rr_idx, $time);
+                     end
+
+
+
                   end
           end
     end
