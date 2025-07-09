@@ -101,6 +101,12 @@ module cva6_tlb_sv39x4
   logic [TLB_ENTRIES-1:0][1:0] invalidate_tag;
 
 
+///////////////////////////////////Content correction (Atena)
+  logic [TLB_ENTRIES-1:0][PteBits-1:0] pte_update_mux;
+  logic [TLB_ENTRIES-1:0][PteBits-1:0] gpte_update_mux;
+
+///////////////////////////////////////////////////
+
   tags_t [TLB_ENTRIES-1:0] tags;
   ///changing definition to array (Atena)
   logic [TLB_ENTRIES-1:0][TagBits-1:0] tags_update;
@@ -112,7 +118,7 @@ module cva6_tlb_sv39x4
   struct packed {
     logic [PteSize-1:0] pte;
     logic [PteSize-1:0] gpte;
-  } tlb_content_n;
+  } [TLB_ENTRIES-1:0] tlb_content_n;
 
   struct packed {
     logic [PteSize-1:0] pte;
@@ -170,26 +176,58 @@ module cva6_tlb_sv39x4
 
 
 
+
+/////contents correction(Atena)
+
+  always_comb begin
+
+    for (int i = 0; i < TLB_ENTRIES; i++) begin
+    if (invalidate_pte[i] == 2'b01 && !DetectionOnly && !update_i.valid) begin
+        pte_update_mux[i] = tlb_content_dec[i].pte;
+    end else begin
+        pte_update_mux[i] = update_i.content;
+        end
+    end
+  end
+
+
+  always_comb begin
+    for (int i = 0; i < TLB_ENTRIES; i++) begin
+    if (invalidate_gpte[i] == 2'b01 && !DetectionOnly && !update_i.valid) begin
+        gpte_update_mux[i] = tlb_content_dec[i].gpte;
+    end else begin
+        gpte_update_mux[i] = update_i.g_content;
+        end
+    end
+  end
+
+
+
+
   ////////////////////////////////////////////////////////////
 
 
   if (EccEnable) begin: gen_tlb_ecc
+
+  for (genvar i = 0; i < TLB_ENTRIES; i++) begin
     hsiao_ecc_enc #(
       .DataWidth ( PteBits ),
       .ProtWidth ( PteCorrBits )
     ) i_ecc_pte_enc (
-      .in  ( update_i.content ),
-      .out ( tlb_content_n.pte)
+      .in  ( pte_update_mux[i] ),
+      .out ( tlb_content_n[i].pte)
     );
+  end
 
+  for (genvar i = 0; i < TLB_ENTRIES; i++) begin
     hsiao_ecc_enc #(
       .DataWidth ( PteBits ),
       .ProtWidth ( PteCorrBits )
     ) i_ecc_gpte_enc (
-      .in  ( update_i.g_content ),
-      .out ( tlb_content_n.gpte)
+      .in  ( gpte_update_mux[i] ),
+      .out ( tlb_content_n[i].gpte)
     );
-
+  end
 
 /////////////adding for loop because now we have seperate encoders for each entry (Atena)
 
@@ -257,14 +295,16 @@ module cva6_tlb_sv39x4
 
   end
    else begin: gen_no_tlb_ecc
-      assign tlb_content_n.pte = update_i.content;
-      assign tlb_content_n.gpte = update_i.g_content;
+      // assign tlb_content_n.pte = update_i.content;
+      // assign tlb_content_n.gpte = update_i.g_content;
       ////////////////////////(Atena)
       //////assign tags_enc[i] = tags_update[i];
       ///////////////////////////////
       assign valid_n = valid_update;
       assign valid_dec = valid_q;
       for (genvar i = 0; i < TLB_ENTRIES; i++) begin
+        assign tlb_content_n[i].pte = update_i.content;
+        assign tlb_content_n[i].gpte = update_i.g_content;
         assign tags_enc[i] = tags_update[i];
         assign tlb_content_dec[i].pte = content_q[i].pte;
         assign tlb_content_dec[i].gpte = content_q[i].gpte;
@@ -487,13 +527,33 @@ module cva6_tlb_sv39x4
         tags_n[i] = tags_enc[i];
         valid_update[i] = 1'b1;
         // and content as well
-        content_n[i].pte = tlb_content_n.pte;
-        content_n[i].gpte = tlb_content_n.gpte;
+        content_n[i].pte = tlb_content_n[i].pte;
+        content_n[i].gpte = tlb_content_n[i].gpte;
       end
       // Correct single-bit errors in TLB tags
-      else if (invalidate_tag[i] == 2'b01 && !DetectionOnly)begin  //////(for updating tags_n in case of having 1 bit error_Atena)
-        tags_n[i] = tags_enc[i]; // Use tags_enc (encoded corrected tag)
-            $display("[INFO] 1-bit error detected in tags_q[%0d], correcting at time %0t", i, $time);
+      else if (!DetectionOnly)begin  //////(for updating tags_n in case of having 1 bit error_Atena)
+
+        // if (invalidate_tag[i] == 2'b01)begin
+        //    tags_n[i] = tags_enc[i]; // Use tags_enc (encoded corrected tag)
+        //     $display("[INFO] 1-bit error detected in tags_q[%0d], correcting at time %0t", i, $time);
+        // end
+
+                     if (invalidate_tag[i] == 2'b01) begin
+                          tags_n[i] = tags_enc[i]; // Use tags_enc (encoded corrected tag)
+                          $display("[CORRECTION] Corrected entry index = %0d at time %0t", i, $time);
+                     end
+
+                     if (invalidate_pte[i] == 2'b01) begin
+                          content_n[i].pte = tlb_content_n[i].pte; // Use your corrected, re-encoded pte
+                          $display("[CORRECTION] Corrected PTE at index = %0d at time %0t", i, $time);
+                     end
+
+                     if (invalidate_gpte[i] == 2'b01) begin
+                          content_n[i].gpte = tlb_content_n[i].gpte; // Use your corrected, re-encoded gpte
+                          $display("[CORRECTION] Corrected GPTE at index = %0d at time %0t", i, $time);
+                     end
+
+
       end
     end
   end
